@@ -1,0 +1,86 @@
+ module peripheral_controller (
+    input wire clk,           // System clock
+    input wire rst_n,         // Active-low reset
+    input wire start,         // Start signal from host
+    input wire data_avl,      // Data available signal from peripheral
+    output reg ack,           // Acknowledge signal
+    output reg data_req,      // Data request to peripheral
+    output reg req_grant,     // Request grant to host
+    output reg intr           // Interrupt to host
+);
+
+    // State encoding
+    typedef enum reg [2:0] {
+        IDLE         = 3'b000,
+        ACKNOWLEDGE  = 3'b001,
+        DATA_REQUEST = 3'b010,
+        WAIT_FOR_DATA = 3'b011,
+        DATA_GRANT   = 3'b100,
+        EXCEPTION    = 3'b101
+    } state_t;
+    
+    state_t current_state, next_state;
+    
+    reg [6:0] counter;  // 7-bit counter for 100 clock cycle timeout
+    
+    // Synchronous state transition
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            current_state <= IDLE;
+            counter <= 7'b0;
+        end else begin
+            current_state <= next_state;
+            if (current_state == WAIT_FOR_DATA && !data_avl) begin
+                counter <= counter + 1'b1;  // Increment counter if in WAIT_FOR_DATA state
+            end else begin
+                counter <= 7'b0;  // Reset counter in other states
+            end
+        end
+    end
+
+    // Next state logic
+    always @(*) begin
+        next_state = current_state;  // Default to stay in the current state
+        ack = 1'b0;
+        data_req = 1'b0;
+        req_grant = 1'b0;
+        intr = 1'b0;
+        
+        case (current_state)
+            IDLE: begin
+                if (start) begin
+                    next_state = ACKNOWLEDGE;
+                end
+            end
+            
+            ACKNOWLEDGE: begin
+                ack = 1'b1;
+                next_state = DATA_REQUEST;
+            end
+            
+            DATA_REQUEST: begin
+                data_req = 1'b1;
+                next_state = WAIT_FOR_DATA;
+            end
+            
+            WAIT_FOR_DATA: begin
+                if (data_avl) begin
+                    next_state = DATA_GRANT;
+                end else if (counter == 7'd100) begin
+                    next_state = EXCEPTION;
+                end
+            end
+            
+            DATA_GRANT: begin
+                req_grant = 1'b1;
+                next_state = IDLE;
+            end
+            
+            EXCEPTION: begin
+                intr = 1'b1;
+                next_state = IDLE;
+            end
+        endcase
+    end
+
+endmodule
